@@ -1,107 +1,87 @@
 package MediaWiki::DumpFile::Parser::Page;
 
 use strict;
+use warnings;
+use utf8;
 use base 'MediaWiki::DumpFile::Pages::Page';
 use constant MAX => 0x7FFFFFF;
 
 sub new {
-  my ($class, $self) = @_;
-  bless $self, $class;
-  return $self;
+  my $class = shift @_;
+  my $self = shift @_;
+  return bless($self, $class);
 }
 
 sub text($) {
-  my $self = shift;
+  my $self = shift @_;
+  return $self->{text} if defined($self->{text});
   my @revisions = $self->revision;
   $self->{text} = $revisions[-1]->text;
   return $self->{text};
 }
 
 sub templates($) {
-  my $self = shift;
-  $self->text unless defined($self->{text});
-  my $text = $self->{text};
-  my @pairs;
-  my $offset = 0;
-  my $nest = 0;
-  my $start = 0;
-  my $end = 0;
-  do {
-    $start = index($text, '{{', $offset); $start = MAX if $start == -1;
-    $end   = index($text, '}}', $offset); $end   = MAX if $end   == -1;
-    #print "**** $start, $end\n";
-    if ($start < $end) {
-      $offset = $start + 2;
-      push(@pairs, "{{,$nest,$start");
-      ++$nest;
-    }
-    else {
-      --$nest;
-      $offset = $end + 2;
-      push(@pairs, "}},$nest,$end");
-    }
-  } while ($start != MAX && $end != MAX);
-  #print "---> " . join("\n---> " => @pairs) . "\n";
-
-  my $N = scalar(@pairs);
-  my @templates;
-  my $k = 0;
-  do {
-    $k = __tie_templates(\@templates, $text, $k, $N, @pairs);
-  } while ($k != -1);
+  my $self = shift @_;
+  return @$self->{templates} if defined($self->{templates});
+  my @templates = $self->__extract_contents("{{", "}}");
   $self->{templates} = \@templates;
   return @templates;
 }
 
-sub __extract_pairs($@) {
-  my($self, @sign) = @_;
-  my @len = (length($sign[0]), length($sign[1]));
-  $self->text unless defined($self->{text});
-  my $text = $self->{text};
-  my @pairs;
+sub links($) {
+  my $self = shift @_;
+  return @$self->{links} if defined($self->{links});
+  my @links = $self->__extract_contents("[[", "]]");
+  $self->{links} = \@links;
+  return @links;
+}
+
+sub __extract_contents($@) {
+  my $self = shift @_;
+  my @sign = @_;
+  my @len = map { length $_ } @sign;
+  my @pos;
+  my $text = $self->text;
+  my @positions;
   my $offset = 0;
   my $nest = 0;
-  my $start = 0;
-  my $end = 0;
   do {
-    $start = index($text, $signs[0], $offset); $start = MAX if $start == -1;
-    $end   = index($text, $signs[1], $offset); $end   = MAX if $end   == -1;
-    #print "**** $start, $end\n";
-    if ($start < $end) {
-      $offset = $start + length($S);
-      push(@pairs, "{{,$nest,$start");
+    $pos[0] = index($text, $sign[0], $offset); $pos[0] = MAX if $pos[0] == -1;
+    $pos[1] = index($text, $sign[1], $offset); $pos[1] = MAX if $pos[1] == -1;
+    #print "**** $pos[0], $pos[1]\n";
+    if ($pos[0] < $pos[1]) {
+      $offset = $pos[0] + $len[0];
+      push(@positions, "$sign[0],$nest,$pos[0]");
       ++$nest;
     }
     else {
       --$nest;
-      $offset = $end + 2;
-      push(@pairs, "}},$nest,$end");
+      $offset = $pos[1] + $len[1];
+      push(@positions, "$sign[1],$nest,$pos[1]");
     }
-  } while ($start != MAX && $end != MAX);
+  } while ($pos[0] != MAX && $pos[1] != MAX);
   #print "---> " . join("\n---> " => @pairs) . "\n";
 
-  my $N = scalar(@pairs);
-  my @templates;
+  my $N = scalar(@positions);
+  my @contents;
   my $k = 0;
   do {
-    $k = __tie_templates(\@templates, $text, $k, $N, @pairs);
+    $k = __tie_contents(\@contents, $text, $k, $N, $sign[0], $sign[1], @positions);
   } while ($k != -1);
-  $self->{templates} = \@templates;
-  return @templates;
-}
+  return @contents;
 }
 
-sub __tie_templates($$$$@) {
-  my ($ref_templates, $text, $k, $N, @pairs) = @_;
+sub __tie_contents($$$$$$@) {
+  my ($ref_contents, $text, $k, $N, $S1, $S2, @positions) = @_;
   for (my $i = $k; $i < $N; ++$i) {
-    my($sign1, $nest1, $pos1) = split(',', $pairs[$i]);
-    next if ($sign1 ne '{{');
+    my($sign1, $nest1, $pos1) = split(',', $positions[$i]);
+    next if ($sign1 ne $S1);
     for (my $j = $i + 1; $j < $N; ++$j) {
-      my($sign2, $nest2, $pos2) = split(',', $pairs[$j]);
-      next if ($sign2 ne '}}' || $nest1 != $nest2);
-      my $template = substr($text, $pos1, $pos2 - $pos1 + 2);
+      my($sign2, $nest2, $pos2) = split(',', $positions[$j]);
+      next if ($sign2 ne $S2 || $nest1 != $nest2);
+      my $content = substr($text, $pos1, $pos2 - $pos1 + 2);
       #print ">>>> $template\n";
-      push(@$ref_templates, $template);
+      push(@$ref_contents, $content);
       return $i + 1;
     }
   }
@@ -111,16 +91,16 @@ sub __tie_templates($$$$@) {
 sub parse_links($) {
   my ($text) = @_;
   $text =~ s/\[\[(?:ファイル|File):[^\[\]]+\]\]//g;
-  $text =~ s/\[\[[^\|\[\]]+\|([^\[\]]+)\]\]/\1/g;
-  $text =~ s/\[\[([^\[\]]+)\]\]/\1/g;
-  $text =~ s|\[http://\S+ (\S+?)\]|\1|g;
+  $text =~ s/\[\[[^\|\[\]]+\|([^\[\]]+)\]\]/$1/g;
+  $text =~ s/\[\[([^\[\]]+)\]\]/$1/g;
+  $text =~ s|\[http://\S+ (\S+?)\]|$1|g;
   return $text;
 }
 
 sub location($) {
   my $self = shift;
   my ($lat, $lng) = (9999, 9999);
-  for (@$self->{templates}) {
+  for (@$self->templates) {
     $_ = parse_links($_);
     if (m/^{{(?:ウィキ座標.*?|[Cc]oord|[Cc]oor\s+(?:title\s+)?dms)\|(\d+)\|(\d+)\|([\d\.]+)\|([NS])\|(\d+)\|(\d+)\|([\d\.]+)\|([EW])\|.*}}$/s) {
       $lat = $1 + ($2 / 60) + ($3 / 3600); $lat = -$lat if $4 eq 'S';

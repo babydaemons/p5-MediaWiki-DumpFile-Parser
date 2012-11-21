@@ -7,7 +7,7 @@ use MediaWiki::DumpFile::Parser::Page;
 sub new {
   my ($class, @args) = @_;
   my $self = MediaWiki::DumpFile::Pages->new(@args);
-  bless($self, $class);
+  return bless($self, $class);
 }
 
 sub next {

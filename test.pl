@@ -12,6 +12,7 @@ my $parser = MediaWiki::DumpFile::Parser->new($input);
 my $page;
 while (defined($page = $parser->next())) {
   print "【", $page->title, "】\n";
-  print $page->text, "\n";
-  print SEP, join("\n" => $page->templates), "\n", SEP;
+  print $page->text, "\n", SEP, "\n";
+  print join("\n" => $page->templates), "\n", SEP;
+  print join("\n" => $page->links), "\n", SEP;
 }
